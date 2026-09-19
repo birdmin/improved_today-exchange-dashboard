@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>오늘의 진짜 정보판 — 원/달러/엔 환율</title>
+  <title>오늘의 진짜 정보판 — 환율</title>
   <style>
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -20,7 +20,33 @@
       box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
       border: 1px solid #e9ecef;
     }
-    h1 { font-size: 1.4rem; margin-top: 0; color: #111; }
+    /* 카드 헤더: 왼쪽 제목 / 오른쪽 통화쌍 선택 (신규) */
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 4px;
+    }
+    h1 { font-size: 1.4rem; margin: 4px 0 0; color: #111; }
+
+    .pair-selector {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 4px;
+    }
+    .pair-selector label { font-size: 0.75rem; color: #868e96; }
+    .pair-selector select {
+      padding: 6px 10px;
+      border: 1px solid #ced4da;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      background: #f1f3f5;
+      font-weight: bold;
+      color: #0b7285;
+    }
 
     /* 상태 뱃지 */
     .status-badge {
@@ -46,10 +72,10 @@
     .error-title { font-weight: bold; color: #c92a2a; margin-bottom: 4px; font-size: 0.9rem; }
     .error-action { font-size: 0.85rem; color: #e03131; }
 
-    /* 기본 환율 요약 박스 (USD/KRW/JPY 3개 대응을 위해 auto-fit로 변경) */
+    /* 기본 환율 요약 박스 (선택된 통화쌍 2개만 표시) */
     .rate-box {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      grid-template-columns: 1fr 1fr;
       gap: 12px;
       margin: 16px 0;
     }
@@ -84,13 +110,14 @@
     .calc-result { font-weight: bold; font-size: 1.1rem; color: #15aabf; margin-top: 8px; }
     .calc-result.calc-error { color: #e03131; font-size: 0.95rem; }
 
-    /* 최신 1개 행 환율 기록 및 어제 대비 변화 테이블 */
+    /* 일별 환율 기록 및 어제 대비 변화 테이블 */
     .history-section {
       margin-top: 24px;
       border-top: 1px solid #eee;
       padding-top: 16px;
     }
-    .section-title { font-size: 1rem; font-weight: bold; margin-bottom: 10px; color: #212529; }
+    .section-title { font-size: 1rem; font-weight: bold; margin-bottom: 2px; color: #212529; }
+    .section-subtitle { font-size: 0.8rem; color: #868e96; margin-bottom: 10px; }
     table { width: 100%; border-collapse: collapse; font-size: 0.85rem; margin-top: 8px; }
     th, td { border: 1px solid #dee2e6; padding: 8px 10px; text-align: center; }
     th { background-color: #f8f9fa; color: #495057; font-weight: 600; }
@@ -125,10 +152,21 @@
 <body>
 
   <div class="card">
-    <div>
-      <span id="status-badge" class="status-badge status-fresh">정상 (fresh)</span>
+    <div class="card-header">
+      <div>
+        <span id="status-badge" class="status-badge status-fresh">정상 (fresh / none)</span>
+        <h1>오늘의 환율 정보판</h1>
+      </div>
+      <!-- 신규: 비교 통화쌍 선택 UI (TC02) -->
+      <div class="pair-selector">
+        <label for="pair-select">비교 통화쌍</label>
+        <select id="pair-select" onchange="onPairChange()">
+          <option value="USD_KRW">🇺🇸 달러 ↔ 🇰🇷 원</option>
+          <option value="KRW_JPY">🇰🇷 원 ↔ 🇯🇵 엔</option>
+          <option value="JPY_USD">🇯🇵 엔 ↔ 🇺🇸 달러</option>
+        </select>
+      </div>
     </div>
-    <h1>오늘의 원/달러/엔 환율 정보판</h1>
 
     <!-- 에러 알림 영역 -->
     <div id="error-box" class="error-box">
@@ -137,50 +175,39 @@
       <button onclick="fetchExchangeRate()" style="margin-top: 8px; font-size: 0.8rem; padding: 4px 8px;">🔄 다시 시도</button>
     </div>
 
-    <!-- 환율 요약 -->
+    <!-- 환율 요약 (선택된 통화쌍 기준 2개 값만, TC01/TC03/TC04) -->
     <div class="rate-box">
       <div class="rate-item">
-        <div class="label">미국 기준 (1 달러)</div>
-        <div class="value" id="usd1-to-krw">- 원</div>
+        <div class="label" id="summary1-label">-</div>
+        <div class="value" id="summary1-value">-</div>
       </div>
       <div class="rate-item">
-        <div class="label">한국 기준 (1,000 원)</div>
-        <div class="value" id="krw1000-to-usd">- 달러</div>
-      </div>
-      <div class="rate-item">
-        <div class="label">일본 기준 (100 엔)</div>
-        <div class="value" id="jpy100-to-krw">- 원</div>
+        <div class="label" id="summary2-label">-</div>
+        <div class="value" id="summary2-value">-</div>
       </div>
     </div>
 
-    <!-- 직접 계산기 (USD/KRW/JPY 3통화, 6방향) -->
+    <!-- 직접 계산기 (선택된 통화쌍 2개로만 제한, TC05) -->
     <div class="calc-box">
       <div class="calc-title">💡 직접 환율 계산하기</div>
       <div class="calc-inputs">
-        <select id="calc-from" onchange="calculate()">
-          <option value="USD">달러 ($)</option>
-          <option value="KRW">원 (₩)</option>
-          <option value="JPY">엔 (¥)</option>
-        </select>
+        <select id="calc-from" onchange="calculate()"></select>
         <input type="number" id="user-amount" value="1" placeholder="금액 입력" oninput="calculate()">
         <span class="calc-arrow">→</span>
-        <select id="calc-to" onchange="calculate()">
-          <option value="KRW">원 (₩)</option>
-          <option value="USD">달러 ($)</option>
-          <option value="JPY">엔 (¥)</option>
-        </select>
+        <select id="calc-to" onchange="calculate()"></select>
       </div>
       <div class="calc-result" id="calc-output">계산 중...</div>
     </div>
 
-    <!-- 일별 환율 기록 및 어제 대비 변화 테이블 -->
+    <!-- 일별 환율 기록 및 어제 대비 변화 테이블 (선택된 통화쌍 기준, TC06/TC07) -->
     <div class="history-section">
       <div class="section-title">📊 일별 환율 기록 및 어제 대비 변화 (KST)</div>
+      <div class="section-subtitle" id="history-subtitle">기준: 미국(달러) ↔ 한국(원)</div>
       <table>
         <thead>
           <tr>
             <th>날짜 (KST)</th>
-            <th>환율 (KRW)</th>
+            <th id="history-rate-header">환율</th>
             <th>어제 대비 변화</th>
             <th>변동률 (%)</th>
           </tr>
@@ -214,6 +241,19 @@
   </div>
 
   <script>
+    // ===== 통화/통화쌍 정의 (라운드2 신규) =====
+    const CURRENCIES = {
+      USD: { label: '달러', symbol: '$', country: '미국', anchor: 1 },
+      KRW: { label: '원',   symbol: '₩', country: '한국', anchor: 1000 },
+      JPY: { label: '엔',   symbol: '¥', country: '일본', anchor: 100 }
+    };
+    const PAIRS = {
+      USD_KRW: ['USD', 'KRW'],
+      KRW_JPY: ['KRW', 'JPY'],
+      JPY_USD: ['JPY', 'USD']
+    };
+    const DISPLAY_DECIMALS = { USD: 4, KRW: 2, JPY: 2 };
+
     function loadSavedRecords() {
       try {
         const saved = localStorage.getItem('aleph_t04_daily_records');
@@ -232,15 +272,12 @@
     let state = {
       status: 'fresh',
       error_code: 'none',
-      usd_krw: null,       // 1 USD = ? KRW
-      usd_jpy: null,       // 1 USD = ? JPY  (신규: JPY 지원)
+      usd_krw: null,   // 1 USD = ? KRW
+      usd_jpy: null,   // 1 USD = ? JPY
       last_known_source_time: null,
-      daily_records: loadSavedRecords()
+      daily_records: loadSavedRecords(), // { record_date, usd_krw, usd_jpy }
+      pair: 'USD_KRW'  // 기본값: 미국(달러) <-> 한국(원), TC01
     };
-
-    // 통화 표시 소수 자릿수 규칙 (카드 상단 값과 표의 값이 서로 다른 자릿수로 보이던 문제를 통일)
-    const DISPLAY_DECIMALS = { USD: 4, KRW: 2, JPY: 2 };
-    const CURRENCY_LABEL = { USD: '달러', KRW: '원', JPY: '엔' };
 
     function formatKST(date) {
       return new Intl.DateTimeFormat('ko-KR', {
@@ -258,12 +295,38 @@
       return value.toLocaleString('ko-KR', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
     }
 
-    // 3통화(USD/KRW/JPY) 어떤 방향이든 계산 가능한 공용 함수 (TC01~TC06 대상)
-    function convertCurrency(amount, fromCur, toCur) {
-      const rates = { USD: 1, KRW: state.usd_krw, JPY: state.usd_jpy };
-      if (!rates[fromCur] || !rates[toCur]) return null; // 아직 로드 안 된 통화
+    // 임의의 usd_krw/usd_jpy(과거 기록 포함)를 받아 통화 변환 (히스토리 계산에 재사용, TC06/TC07)
+    function convertWithRates(amount, fromCur, toCur, rates) {
+      if (rates[fromCur] == null || rates[toCur] == null) return null;
       const amountInUsd = amount / rates[fromCur];
       return amountInUsd * rates[toCur];
+    }
+
+    function convertCurrency(amount, fromCur, toCur) {
+      return convertWithRates(amount, fromCur, toCur, { USD: 1, KRW: state.usd_krw, JPY: state.usd_jpy });
+    }
+
+    // 선택된 통화쌍의 두 통화 코드를 반환
+    function getPairCurrencies() {
+      return PAIRS[state.pair];
+    }
+
+    // ===== 통화쌍 전환 (TC02, TC03, TC04, TC10) =====
+    function onPairChange() {
+      state.pair = document.getElementById('pair-select').value;
+      populateCalcSelects();
+      renderUI();
+    }
+
+    function populateCalcSelects() {
+      const [A, B] = getPairCurrencies();
+      const fromSel = document.getElementById('calc-from');
+      const toSel = document.getElementById('calc-to');
+      const optionHtml = (cur) => `<option value="${cur}">${CURRENCIES[cur].label} (${CURRENCIES[cur].symbol})</option>`;
+      fromSel.innerHTML = optionHtml(A) + optionHtml(B);
+      toSel.innerHTML = optionHtml(A) + optionHtml(B);
+      fromSel.value = A;
+      toSel.value = B;
     }
 
     function calculate() {
@@ -279,7 +342,7 @@
       const rawInput = document.getElementById('user-amount').value;
       const amount = parseFloat(rawInput);
 
-      // TC09: 비정상 입력(음수/문자/빈값)은 조용히 0으로 계산하지 않고 정직하게 안내
+      // TC08(회귀): 비정상 입력은 조용히 0 처리하지 않고 정직하게 안내
       if (rawInput.trim() === '' || isNaN(amount) || amount < 0) {
         output.textContent = '⚠ 올바른 숫자(0 이상)를 입력해 주세요.';
         output.classList.add('calc-error');
@@ -294,52 +357,85 @@
 
       const result = convertCurrency(amount, fromCur, toCur);
       output.classList.remove('calc-error');
-      output.textContent = `= ${formatCurrency(result, toCur)} ${CURRENCY_LABEL[toCur]}`;
+      output.textContent = `= ${formatCurrency(result, toCur)} ${CURRENCIES[toCur].label}`;
     }
 
-    function renderHistoryTable() {
-      const tbody = document.getElementById('history-table-body');
-      tbody.innerHTML = '';
+    // 선택된 통화쌍 기준 요약값 2개 렌더링 (TC01, TC03, TC04)
+    function renderSummary() {
+      const [A, B] = getPairCurrencies();
+      const label1 = document.getElementById('summary1-label');
+      const label2 = document.getElementById('summary2-label');
+      const value1 = document.getElementById('summary1-value');
+      const value2 = document.getElementById('summary2-value');
 
-      if (state.daily_records.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="4">저장된 일별 기록이 없습니다.</td></tr>';
+      label1.textContent = `${CURRENCIES[A].country} 기준 (${CURRENCIES[A].anchor.toLocaleString('ko-KR')} ${CURRENCIES[A].label})`;
+      label2.textContent = `${CURRENCIES[B].country} 기준 (${CURRENCIES[B].anchor.toLocaleString('ko-KR')} ${CURRENCIES[B].label})`;
+
+      if (!state.usd_krw || (B === 'JPY' && !state.usd_jpy) || (A === 'JPY' && !state.usd_jpy)) {
+        value1.textContent = '- (미수신)';
+        value2.textContent = '- (미수신)';
         return;
       }
 
-      const sortedRecords = [...state.daily_records].sort((a, b) => a.record_date.localeCompare(b.record_date));
-      const latestRecord = sortedRecords[sortedRecords.length - 1];
-      const latestIndex = sortedRecords.length - 1;
+      const v1 = convertCurrency(CURRENCIES[A].anchor, A, B);
+      const v2 = convertCurrency(CURRENCIES[B].anchor, B, A);
+      value1.textContent = `${formatCurrency(v1, B)} ${CURRENCIES[B].label}`;
+      value2.textContent = `${formatCurrency(v2, A)} ${CURRENCIES[A].label}`;
+    }
+
+    // 선택된 통화쌍 기준으로 히스토리 표 렌더링 (TC06, TC07)
+    function renderHistoryTable() {
+      const [A, B] = getPairCurrencies();
+      document.getElementById('history-subtitle').textContent =
+        `기준: ${CURRENCIES[A].country}(${CURRENCIES[A].label}) ↔ ${CURRENCIES[B].country}(${CURRENCIES[B].label})`;
+      document.getElementById('history-rate-header').textContent =
+        `환율 (1${CURRENCIES[A].label}당 ${CURRENCIES[B].label})`;
+
+      const tbody = document.getElementById('history-table-body');
+      tbody.innerHTML = '';
+
+      // 이 통화쌍 계산에 필요한 필드가 실제로 존재하는 기록만 사용 (정직한 결측 처리)
+      const requiredFields = [A, B].filter(c => c !== 'USD').map(c => c === 'KRW' ? 'usd_krw' : 'usd_jpy');
+      const usable = state.daily_records.filter(r => requiredFields.every(f => r[f] != null));
+
+      if (usable.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="4">이 통화쌍의 기록이 아직 없습니다.</td></tr>';
+        return;
+      }
+
+      const sorted = [...usable].sort((a, b) => a.record_date.localeCompare(b.record_date));
+      const latest = sorted[sorted.length - 1];
+      const latestRate = convertWithRates(1, A, B, { USD: 1, KRW: latest.usd_krw, JPY: latest.usd_jpy });
 
       let diffText = '-';
       let rateText = '-';
       let diffClass = 'same';
 
-      if (latestIndex > 0) {
-        const prevValue = sortedRecords[latestIndex - 1].normalized_value;
-        const currValue = latestRecord.normalized_value;
-        const diff = currValue - prevValue;
-        const diffRate = (diff / prevValue) * 100;
+      if (sorted.length > 1) {
+        const prev = sorted[sorted.length - 2];
+        const prevRate = convertWithRates(1, A, B, { USD: 1, KRW: prev.usd_krw, JPY: prev.usd_jpy });
+        const diff = latestRate - prevRate;
+        const diffRate = (diff / prevRate) * 100;
 
         if (diff > 0) {
-          diffText = `▲ +${diff.toFixed(3)} 원`;
+          diffText = `▲ +${diff.toFixed(3)} ${CURRENCIES[B].label}`;
           rateText = `+${diffRate.toFixed(2)}%`;
           diffClass = 'up';
         } else if (diff < 0) {
-          diffText = `▼ ${diff.toFixed(3)} 원`;
+          diffText = `▼ ${diff.toFixed(3)} ${CURRENCIES[B].label}`;
           rateText = `${diffRate.toFixed(2)}%`;
           diffClass = 'down';
         } else {
-          diffText = '0.000 원';
+          diffText = `0.000 ${CURRENCIES[B].label}`;
           rateText = '0.00%';
           diffClass = 'same';
         }
       }
 
-      // TC07: 표의 환율(KRW) 값도 카드 상단과 동일하게 소수 2자리로 통일
       const tr = document.createElement('tr');
       tr.innerHTML = `
-        <td>${latestRecord.record_date}</td>
-        <td>${formatCurrency(latestRecord.normalized_value, 'KRW')} 원</td>
+        <td>${latest.record_date}</td>
+        <td>${formatCurrency(latestRate, B)} ${CURRENCIES[B].label}</td>
         <td class="${diffClass}">${diffText}</td>
         <td class="${diffClass}">${rateText}</td>
       `;
@@ -360,20 +456,11 @@
         errorBox.style.display = 'none';
       }
 
-      if (state.usd_krw) {
-        document.getElementById('usd1-to-krw').textContent = `${formatCurrency(state.usd_krw, 'KRW')} 원`;
-        document.getElementById('krw1000-to-usd').textContent = `${formatCurrency(1000 / state.usd_krw, 'USD')} 달러`;
+      if (state.last_known_source_time) {
         document.getElementById('source-time').textContent = formatKST(state.last_known_source_time);
       }
 
-      // TC10: JPY 데이터가 없으면(장애 등) 억지로 값을 만들지 않고 '-' 상태를 정직하게 유지
-      if (state.usd_krw && state.usd_jpy) {
-        const jpy100ToKrw = convertCurrency(100, 'JPY', 'KRW');
-        document.getElementById('jpy100-to-krw').textContent = `${formatCurrency(jpy100ToKrw, 'KRW')} 원`;
-      } else if (!state.usd_jpy) {
-        document.getElementById('jpy100-to-krw').textContent = '- 원 (미수신)';
-      }
-
+      renderSummary();
       calculate();
       document.getElementById('fetch-time').textContent = formatKST(fetchTime || new Date());
       renderHistoryTable();
@@ -396,10 +483,9 @@
           state.status = 'fresh';
           state.error_code = 'none';
           state.usd_krw = dataToday.rates.KRW;
-          state.usd_jpy = dataToday.rates.JPY || null; // 신규: 응답에 JPY가 없어도 죽지 않고 '미수신'으로 정직하게 처리
+          state.usd_jpy = dataToday.rates.JPY || null; // 응답에 JPY가 없어도 정직하게 '미수신' 처리
           state.last_known_source_time = new Date(dataToday.time_last_update_unix * 1000);
 
-          // 시크릿 모드 또는 첫 접속으로 어제 기록이 없을 때 어제 환율 자동 호출
           const hasYesterdayRecord = state.daily_records.some(r => r.record_date === yesterdayStr);
 
           if (!hasYesterdayRecord) {
@@ -408,28 +494,32 @@
               const resYesterday = await fetch(`https://open.er-api.com/v6/history/USD/${year}/${month}/${day}`);
               const dataYesterday = await resYesterday.json();
 
-              if (dataYesterday.result === 'success' && dataYesterday.rates && dataYesterday.rates.KRW) {
+              if (dataYesterday.result === 'success' && dataYesterday.rates) {
                 state.daily_records.push({
                   record_date: yesterdayStr,
-                  normalized_value: dataYesterday.rates.KRW
+                  usd_krw: dataYesterday.rates.KRW ?? null,
+                  usd_jpy: dataYesterday.rates.JPY ?? null
                 });
               }
             } catch (e) {
-              // 어제 API 호출에 실패하더라도 수기 보완 기본값 부여
+              // 어제 API 호출 실패 시에도 KRW만 수기 보완값 부여, JPY는 없다고 정직하게 비워둠
               state.daily_records.push({
                 record_date: yesterdayStr,
-                normalized_value: 1380.502
+                usd_krw: 1380.502,
+                usd_jpy: null
               });
             }
           }
 
           const existingIdx = state.daily_records.findIndex(r => r.record_date === todayStr);
           if (existingIdx >= 0) {
-            state.daily_records[existingIdx].normalized_value = state.usd_krw;
+            state.daily_records[existingIdx].usd_krw = state.usd_krw;
+            state.daily_records[existingIdx].usd_jpy = state.usd_jpy;
           } else {
             state.daily_records.push({
               record_date: todayStr,
-              normalized_value: state.usd_krw
+              usd_krw: state.usd_krw,
+              usd_jpy: state.usd_jpy
             });
           }
 
@@ -460,6 +550,8 @@
       renderUI(new Date());
     }
 
+    // 초기화
+    populateCalcSelects();
     fetchExchangeRate();
   </script>
 </body>
