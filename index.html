@@ -191,10 +191,8 @@
     <div class="calc-box">
       <div class="calc-title">💡 직접 환율 계산하기</div>
       <div class="calc-inputs">
-        <select id="calc-from" onchange="calculate()"></select>
+        <select id="calc-currency" onchange="calculate()"></select>
         <input type="number" id="user-amount" value="1" placeholder="금액 입력" oninput="calculate()">
-        <span class="calc-arrow">→</span>
-        <select id="calc-to" onchange="calculate()"></select>
       </div>
       <div class="calc-result" id="calc-output">계산 중...</div>
     </div>
@@ -257,7 +255,16 @@
     function loadSavedRecords() {
       try {
         const saved = localStorage.getItem('aleph_t04_daily_records');
-        return saved ? JSON.parse(saved) : [];
+        if (!saved) return [];
+        const records = JSON.parse(saved);
+        // 라운드1(레거시) 형식 { record_date, normalized_value }을
+        // 라운드2 형식 { record_date, usd_krw, usd_jpy }으로 데이터 손실 없이 이관
+        return records.map(r => {
+          if (r.usd_krw == null && r.normalized_value != null) {
+            return { record_date: r.record_date, usd_krw: r.normalized_value, usd_jpy: r.usd_jpy ?? null };
+          }
+          return r;
+        });
       } catch (e) {
         return [];
       }
@@ -318,15 +325,18 @@
       renderUI();
     }
 
+    // 선택된 통화쌍의 반대쪽 통화를 반환 (예: 쌍이 USD/KRW이고 cur=USD면 KRW 반환)
+    function otherCurrencyInPair(cur) {
+      const [A, B] = getPairCurrencies();
+      return cur === A ? B : A;
+    }
+
     function populateCalcSelects() {
       const [A, B] = getPairCurrencies();
-      const fromSel = document.getElementById('calc-from');
-      const toSel = document.getElementById('calc-to');
+      const sel = document.getElementById('calc-currency');
       const optionHtml = (cur) => `<option value="${cur}">${CURRENCIES[cur].label} (${CURRENCIES[cur].symbol})</option>`;
-      fromSel.innerHTML = optionHtml(A) + optionHtml(B);
-      toSel.innerHTML = optionHtml(A) + optionHtml(B);
-      fromSel.value = A;
-      toSel.value = B;
+      sel.innerHTML = optionHtml(A) + optionHtml(B);
+      sel.value = A; // 기본값: 통화쌍의 첫 번째 통화
     }
 
     function calculate() {
@@ -337,8 +347,8 @@
         return;
       }
 
-      const fromCur = document.getElementById('calc-from').value;
-      const toCur = document.getElementById('calc-to').value;
+      const fromCur = document.getElementById('calc-currency').value;
+      const toCur = otherCurrencyInPair(fromCur); // 선택한 통화의 반대쪽으로 자동 결정 (TC05 개정)
       const rawInput = document.getElementById('user-amount').value;
       const amount = parseFloat(rawInput);
 
@@ -486,28 +496,37 @@
           state.usd_jpy = dataToday.rates.JPY || null; // 응답에 JPY가 없어도 정직하게 '미수신' 처리
           state.last_known_source_time = new Date(dataToday.time_last_update_unix * 1000);
 
-          const hasYesterdayRecord = state.daily_records.some(r => r.record_date === yesterdayStr);
+          // 날짜만 보고 "있다"고 판단하면 레거시 기록(usd_jpy 없음)을 놓치므로,
+          // 실제로 두 필드가 다 채워져 있는지까지 확인한다 (신규 통화쌍 계산 버그 수정).
+          const yesterdayIdx = state.daily_records.findIndex(r => r.record_date === yesterdayStr);
+          const yesterdayRecord = yesterdayIdx >= 0 ? state.daily_records[yesterdayIdx] : null;
+          const needsBackfill = !yesterdayRecord || yesterdayRecord.usd_krw == null || yesterdayRecord.usd_jpy == null;
 
-          if (!hasYesterdayRecord) {
+          if (needsBackfill) {
             try {
               const [year, month, day] = yesterdayStr.split('-');
               const resYesterday = await fetch(`https://open.er-api.com/v6/history/USD/${year}/${month}/${day}`);
               const dataYesterday = await resYesterday.json();
 
               if (dataYesterday.result === 'success' && dataYesterday.rates) {
-                state.daily_records.push({
+                const merged = {
                   record_date: yesterdayStr,
-                  usd_krw: dataYesterday.rates.KRW ?? null,
-                  usd_jpy: dataYesterday.rates.JPY ?? null
-                });
+                  usd_krw: dataYesterday.rates.KRW ?? (yesterdayRecord ? yesterdayRecord.usd_krw : null),
+                  usd_jpy: dataYesterday.rates.JPY ?? (yesterdayRecord ? yesterdayRecord.usd_jpy : null)
+                };
+                if (yesterdayIdx >= 0) { state.daily_records[yesterdayIdx] = merged; }
+                else { state.daily_records.push(merged); }
               }
             } catch (e) {
-              // 어제 API 호출 실패 시에도 KRW만 수기 보완값 부여, JPY는 없다고 정직하게 비워둠
-              state.daily_records.push({
+              // 어제 API 호출 실패 시, 기존에 알던 값은 유지하고 부족한 KRW만 수기 보완값 부여
+              // (JPY는 억지로 채우지 않고 정직하게 비워둠)
+              const fallback = {
                 record_date: yesterdayStr,
-                usd_krw: 1380.502,
-                usd_jpy: null
-              });
+                usd_krw: (yesterdayRecord && yesterdayRecord.usd_krw != null) ? yesterdayRecord.usd_krw : 1380.502,
+                usd_jpy: (yesterdayRecord && yesterdayRecord.usd_jpy != null) ? yesterdayRecord.usd_jpy : null
+              };
+              if (yesterdayIdx >= 0) { state.daily_records[yesterdayIdx] = fallback; }
+              else { state.daily_records.push(fallback); }
             }
           }
 
