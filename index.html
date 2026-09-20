@@ -219,7 +219,7 @@
     <!-- 메타데이터 -->
     <div class="meta-list">
       <div class="meta-item"><span class="meta-label">표시 단위</span><span id="unit">원 (KRW) / 달러 (USD) / 엔 (JPY)</span></div>
-      <div class="meta-item"><span class="meta-label">데이터 출처</span><span id="source">ExchangeRate-API (open.er-api.com)</span></div>
+      <div class="meta-item"><span class="meta-label">데이터 출처</span><span id="source">실시간: ExchangeRate-API (open.er-api.com) / 전일 비교: Frankfurter(ECB)</span></div>
       <div class="meta-item"><span class="meta-label">출처 시각 (Data Update)</span><span id="source-time">-</span></div>
       <div class="meta-item"><span class="meta-label">조회 시각 (Fetch Time)</span><span id="fetch-time">-</span></div>
       <div class="meta-item"><span class="meta-label">기준 시간대</span><span id="timezone">KST (Asia/Seoul, UTC+9)</span></div>
@@ -496,37 +496,38 @@
           state.usd_jpy = dataToday.rates.JPY || null; // 응답에 JPY가 없어도 정직하게 '미수신' 처리
           state.last_known_source_time = new Date(dataToday.time_last_update_unix * 1000);
 
-          // 날짜만 보고 "있다"고 판단하면 레거시 기록(usd_jpy 없음)을 놓치므로,
-          // 실제로 두 필드가 다 채워져 있는지까지 확인한다 (신규 통화쌍 계산 버그 수정).
-          const yesterdayIdx = state.daily_records.findIndex(r => r.record_date === yesterdayStr);
-          const yesterdayRecord = yesterdayIdx >= 0 ? state.daily_records[yesterdayIdx] : null;
-          const needsBackfill = !yesterdayRecord || yesterdayRecord.usd_krw == null || yesterdayRecord.usd_jpy == null;
+          // ===== 어제 데이터 백필 (v4에서 전면 교체) =====
+          // 기존에 쓰던 open.er-api.com/v6/history/... 는 실제로 존재하지 않는 엔드포인트라
+          // 항상 실패했고, catch에서 KRW만 가짜 상수(1380.502)로 대체하고 있었음(정직성 위반).
+          // Frankfurter(ECB 공식 데이터, 무료·무인증, KRW·JPY 모두 지원)로 교체.
+          // "어제(yesterdayStr)"가 주말/휴일이면 Frankfurter가 가장 최근 영업일 데이터를 돌려주므로,
+          // 날짜를 미리 고정하지 않고 실제 응답의 date 필드를 그대로 신뢰한다.
+          const hasUsableEarlierRecord = state.daily_records.some(
+            r => r.record_date < todayStr && r.usd_krw != null && r.usd_jpy != null
+          );
 
-          if (needsBackfill) {
+          if (!hasUsableEarlierRecord) {
             try {
-              const [year, month, day] = yesterdayStr.split('-');
-              const resYesterday = await fetch(`https://open.er-api.com/v6/history/USD/${year}/${month}/${day}`);
+              const resYesterday = await fetch(`https://api.frankfurter.dev/v1/${yesterdayStr}?base=USD&symbols=KRW,JPY`);
               const dataYesterday = await resYesterday.json();
 
-              if (dataYesterday.result === 'success' && dataYesterday.rates) {
-                const merged = {
-                  record_date: yesterdayStr,
-                  usd_krw: dataYesterday.rates.KRW ?? (yesterdayRecord ? yesterdayRecord.usd_krw : null),
-                  usd_jpy: dataYesterday.rates.JPY ?? (yesterdayRecord ? yesterdayRecord.usd_jpy : null)
-                };
-                if (yesterdayIdx >= 0) { state.daily_records[yesterdayIdx] = merged; }
-                else { state.daily_records.push(merged); }
+              if (dataYesterday && dataYesterday.rates && dataYesterday.date) {
+                const actualDate = dataYesterday.date; // 주말/휴일이면 yesterdayStr과 다를 수 있음(정상)
+                const idx = state.daily_records.findIndex(r => r.record_date === actualDate);
+                if (idx >= 0) {
+                  // 이미 있는 값(예: 오늘자 실시간 데이터)을 덮어쓰지 않고, 빈 필드만 채운다.
+                  if (state.daily_records[idx].usd_krw == null) state.daily_records[idx].usd_krw = dataYesterday.rates.KRW ?? null;
+                  if (state.daily_records[idx].usd_jpy == null) state.daily_records[idx].usd_jpy = dataYesterday.rates.JPY ?? null;
+                } else {
+                  state.daily_records.push({
+                    record_date: actualDate,
+                    usd_krw: dataYesterday.rates.KRW ?? null,
+                    usd_jpy: dataYesterday.rates.JPY ?? null
+                  });
+                }
               }
             } catch (e) {
-              // 어제 API 호출 실패 시, 기존에 알던 값은 유지하고 부족한 KRW만 수기 보완값 부여
-              // (JPY는 억지로 채우지 않고 정직하게 비워둠)
-              const fallback = {
-                record_date: yesterdayStr,
-                usd_krw: (yesterdayRecord && yesterdayRecord.usd_krw != null) ? yesterdayRecord.usd_krw : 1380.502,
-                usd_jpy: (yesterdayRecord && yesterdayRecord.usd_jpy != null) ? yesterdayRecord.usd_jpy : null
-              };
-              if (yesterdayIdx >= 0) { state.daily_records[yesterdayIdx] = fallback; }
-              else { state.daily_records.push(fallback); }
+              // 백필 자체가 실패하면 가짜 값을 만들지 않고 정직하게 "기록 없음" 상태로 둔다.
             }
           }
 
